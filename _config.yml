@@ -1,5 +1,5 @@
 theme: minima
 title: Preision Egnineering
-description: Design and analysis unconstrained by reality
+description: Getting it right some of the time, everytime
 plugins:
   - jekyll-feed
