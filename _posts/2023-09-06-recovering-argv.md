@@ -25,7 +25,7 @@ int
 main(int argc, char *argv[])
 ```
 
-Observe that `envp`--the _environment_ (or `environ`, the list of key-value pairs which are environment variables and their values) is passed to `execve()` and it is perfectly normal to access this data wherever you are in an application--even a library--with `getenv()` and the like. Contemporary developers often think of the environment as the context in which a process is executing, but not necessarily a part of the process itself. This is reinforced by the nature of the `getenv()`/`setenv()` interfaces, which can be called from anywhere (plus they look _transactional_, and we've been taught through repetition that transactions are for remote servers). Like any matter of convention, it doesn't have to be like this. Consider this alternative prototype for `main()`:
+Observe that `envp`--the _environment_ (or `environ`, the list of key-value pairs which are environment variables and their values) is passed to `execve()` and it is perfectly normal to access this data wherever you are in an application--even a library--with `getenv()` and the like. Contemporary developers often think of the environment as the context in which a process is executing, but not necessarily a part of the process itself. This is reinforced by the nature of the `getenv()`/`setenv()` interfaces, which can be called from anywhere (plus they look _transactional_, and we've been taught through repetition that transactions go somewhere else and mutate somebody else's state). Like any matter of convention, it doesn't have to be like this. Consider this alternative prototype for `main()`:
 
 ```
 int
