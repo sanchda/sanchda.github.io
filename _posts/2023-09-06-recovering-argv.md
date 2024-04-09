@@ -7,7 +7,7 @@ tags: C, POSIX
 
 Let's play the game where we ask a silly question, but answer it earnestly:
 
-> How can I get the value of `argc` and `argv` from outside of the `main()` function?
+> How can I get the value of `argc` and `argv` from outside the `main()` function?
 
 ## Some notes on argv
 
@@ -95,7 +95,7 @@ int main(void) {
 }
 ```
 
-In other words, we can extract the commandline arguments from within an application which itself did not make those arguments transparent to `main()` (if you're wondering about this, keep your eyes peeled for a later article on the system V ABI and its significance).
+In other words, we can extract the command-line arguments from within an application which itself did not make those arguments transparent to `main()` (if you're wondering about this, keep your eyes peeled for a later article on the system V ABI and its significance).
 
 One more piece of trivia that comes in handy here, and before I spoil the surprise let me lead with some code and its output:
 
@@ -117,9 +117,9 @@ On my machine, this prints:
 
 > environ diff: 5f
 
-When a process is instantiated, its virtual memory layout is backed by many kinds of mappings. There are a plethora of exotic and interesting backing types, such as userfaultfd and memfd, but for the purposes of discussion let's pretend that the mappings we have are file-backed (such as those regions related to dynamic libraries and the main binary), heap (anynomous mappings), and stack (also anynomous).
+When a process is instantiated, its virtual memory layout is backed by many kinds of mappings. There are a plethora of exotic and interesting backing types, such as userfaultfd and memfd, but for the purposes of discussion let's pretend that the mappings we have are file-backed (such as those regions related to dynamic libraries and the main binary), heap (anonymous mappings), and stack (also anonymous).
 
-I'll leave the distinction between heap and stack for a different post, but in general it's a great place for the OS to stuff things that are outside of the management of the user. The code above takes advantage of the fact that the C language pushes scope-local variables to the stack.  Thus when we return the address to one such variable, we're actually returning an address near the "top" of the stack. Since it has a very small distance from such an address, `environ` is very obviously part of the stack.  Thus, when we navigate downward as we do (remember:  stack grows from high-valued to low-valued addresses), due to the dynamics of stack access we're unlikely to overflow.
+I'll leave the distinction between heap and stack for a different post, but in general it's a great place for the OS to stuff things that are outside the management of the user. The code above takes advantage of the fact that the C language pushes scope-local variables to the stack.  Thus when we return the address to one such variable, we're actually returning an address near the "top" of the stack. Since it has a very small distance from such an address, `environ` is very obviously part of the stack.  Thus, when we navigate downward as we do (remember:  stack grows from high-valued to low-valued addresses), due to the dynamics of stack access we're unlikely to overflow.
 
 There you have it. A pointless answer to a question nobody asked.
 
@@ -128,11 +128,11 @@ There you have it. A pointless answer to a question nobody asked.
 
 Let's try to do something with this knowledge.
 
-On many common and popular Unices, `ps -ef` will provide a listing of currently-running processes, alongside the full value of their commandline arguments. It doesn't matter how the process was launched--be it through a shell, via `popen()`, or even by a direct call to `execve()`--those arguments are visible to anyone who has the right to see them.
+On many common and popular Unices, `ps -ef` will provide a listing of currently-running processes, alongside the full value of their command-line arguments. It doesn't matter how the process was launched--be it through a shell, via `popen()`, or even by a direct call to `execve()`--those arguments are visible to anyone who has the right to see them.
 
 For this reason, the conventional wisdom is that secrets should never be passed into a process as an argument. Rather, they should be transmitted through some other means. Just the same, wouldn't it be cute to modify our arguments somehow?
 
-One might imagine that commands like `ps -ef` speak to some kind of system-wide registry of process information. To many people, this implies that the kernel keeps this information handy. For better or worse, that's not how things really work. Rather, these registries are just reflecting the internal state of the processes they list. In other words, there is a place inside of your application where the instantaneous value of `argv` is encoded, and that place is checked by the kernel whenever someone asks for that information. From this understanding, it stands to reason that modifying this place might change how the arguments to our process are reported.
+One might imagine that commands like `ps -ef` speak to some kind of system-wide registry of process information. To many people, this implies that the kernel keeps this information handy. For better or worse, that's not how things really work. Rather, these registries are just reflecting the internal state of the processes they list. In other words, there is a place inside your application where the instantaneous value of `argv` is encoded, and that place is checked by the kernel whenever someone asks for that information. From this understanding, it stands to reason that modifying this place might change how the arguments to our process are reported.
 
 For most people, there is very little reason to ever frame this exercise, let alone follow through with it. But doing so is surprisingly straightforward:
 
@@ -145,7 +145,7 @@ int main(int argc, char **argv) {
 }
 ```
 
-This program will modify its own `argv` (a program must have a name, and that name is hopefully at least a single character) in a fairly trivial way.  It will then use `popen()` to shell out to `ps` (through the `print_ps()` helper function, which is included in the code link at the end) to verify that an external observer would see the same change. We didn't so so in the above, but it's trivial to verify that the `get_args()` procedure returns the same `argv` pointers as the one given to `main()`.
+This program will modify its own `argv` (a program must have a name, and that name is hopefully at least a single character) in a fairly trivial way.  It will then use `popen()` to shell out to `ps` (through the `print_ps()` helper function, which is included in the code link at the end) to verify that an external observer would see the same change. We didn't do so in the above, but it's straightforward to verify that the `get_args()` procedure returns the same `argv` pointers as the one given to `main()`.
 
 ## What comes next?
 

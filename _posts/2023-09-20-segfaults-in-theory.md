@@ -26,7 +26,7 @@ Completely irrelevant. Unask the question.
 
 ## What causes a segmentation fault?
 
-A segmentation fault occurs whenever an application attempts to de-reference an address for which the process is not permissioned. The phrase "not permissioned" is actually doing a lot of heavy lifting in this description, so I'll break it down into some examples. First, some discussion on paged/virtual memory.
+A segmentation fault occurs whenever an application attempts to dereference an address for which the process is not permissioned. The phrase "not permissioned" is actually doing a lot of heavy lifting in this description, so I'll break it down into some examples. First, some discussion on paged/virtual memory.
 
 
 ### Some discussion on paged/virtual memory
@@ -40,7 +40,7 @@ One might conceptualize this by imagining each process running on the system to 
 
 ### Some more discussion, paged memory in practice 
 
-One important realization from the note above is that the unit of permissioning is the page. In other words, when a user requests an address, the OS has to round that address down to the start of the containing page in order to compute permissions and availability. This means that the state of the process as a component of the system might be a little bit different than the conceptual state of the process from a developer's thinking about it. This may not be an obvious distinction, so let's talk about it.
+One important realization from the note above is that the unit of permissioning is the page. In other words, when a user requests an address, the OS has to round that address down to the start of the containing page in order to compute permissions and availability. This means that the state of the process as a component of the system might be a little bit different from the conceptual state of the process from a developer's thinking about it. This may not be an obvious distinction, so let's talk about it.
 
 No matter the dominant mental model a developer may use to reason about objects in their programming environment-du-jour, those objects are almost always persisted in computer random access (read or write) memory (to use the term favored by the ancients). And while we're at it, since most contemporary systems use the Von Neumann architecture, the same should be said about the machine instructions which cause those accesses to occur. However, many programming languages give us the tools to avoid having to think about those addresses ourselves--for instance, we don't often chase pointers in Python.
 
@@ -61,7 +61,7 @@ uintptr_t align_to_page(uintptr_t ptr) {
   *buf_end='\0';
 ```
 
-Conceptually, when we allocate memory with `malloc()`, we are advised to keep our extremities within the enclosure at all times--we have to respect the range of bytes we requested. This is no less true in the horrible example, which will almost certainly break most applications, perhaps even disasterously. However, the point of the exercise is to know what instantaneous operations will segfault. This code may _cause_ an application to segfault later, but it will not cause it to segfault as a by-product of the execution of those lines.
+Conceptually, when we allocate memory with `malloc()`, we are advised to keep our extremities within the enclosure at all times--we have to respect the range of bytes we requested. This is no less true in the horrible example, which will almost certainly break most applications, perhaps even disastrously. However, the point of the exercise is to know what instantaneous operations will segfault. This code may _cause_ an application to segfault later, but it will not cause it to segfault as a by-product of the execution of those lines.
 
 The point is: when you allocate, you get a page. When you apply protections, they apply to a page.
 
@@ -72,7 +72,7 @@ Let's talk about some segfaults now.
 
 #### Null page
 
-Owing in part to history, the most common type of segfault probably consists of trying to de-reference an address which _itself_ (as an address) has not bee initialized.  For instance.
+Owing in part to history, the most common type of segfault probably consists of trying to dereference an address which _itself_ (as an address) has not been initialized.  For instance.
 ```
 struct MyStruct {
     int foo;
