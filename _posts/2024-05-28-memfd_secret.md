@@ -224,4 +224,7 @@ Not even the name of the process is being harvested from the "right" place.
 I'd like to point out how bizarre this is.
 Conceptually, you might imagine that operations such as "hide my arguments from procfs" would be tied to individual processes.
 We didn't do such a thing.
-The modification we _did_ do involved merely changing the type of mapping particular pages in the process address space had.
+The modification we _did_ do involved changing the type of mapping particular pages in the process address space had.
+
+Now, this all isn't necessarily the _intended_ usage of `memfd_secret()`.
+Rather, it's one toy example of extremely limited utility, which nevertheless manages to capture at least one interesting aspect of Linux.
