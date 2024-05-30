@@ -1,5 +1,6 @@
 theme: minima
 title: Preision Egnineering
 description: Getting it right some of the time, everytime
+url: "https://sanchda.github.io"
 plugins:
   - jekyll-feed
