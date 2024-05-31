@@ -229,4 +229,4 @@ The modification we _did_ do involved changing the type of mapping particular pa
 Now, this all isn't necessarily the _intended_ usage of `memfd_secret()`.
 Rather, it's one toy example of extremely limited utility, which nevertheless manages to capture at least one interesting aspect of Linux.
 
-You can check out a more complete example of the ideas discussed here [in my systems experiments repo](https://github.com/sanchda/systems_experiments/tree/main/memfd_secret).
+You can check out a more complete example [in my systems experiments repo](https://github.com/sanchda/systems_experiments/tree/main/memfd_secret).
