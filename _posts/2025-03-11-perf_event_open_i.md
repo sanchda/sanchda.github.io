@@ -6,7 +6,7 @@ tags: systems-programming, linux, observability
 ---
 
 We're going to go through a nontrivial, albeit pointless, example of `perf_event_open()`.
-This discussion will almost certainly be entirely pointless, unless you're doing experiments and need a reference.
+Now, `perf_event_open()` isn't exactly something we use every day, so this discussion might come across as totally pointless (because it is, unless you're in need of reference).
 So here we go.
 
 # perf_event_open()
