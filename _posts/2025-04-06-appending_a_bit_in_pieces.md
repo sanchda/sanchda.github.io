@@ -1,25 +1,20 @@
 ---
 layout: post
-date: 2025-03-31
+date: 2025-04-06
 title: "Appending a Bit, in Pieces"
 tags: systems-programming, linux
 ---
-For some reason or another, I keep getting involved in what I can only describe as "deconstructive engineering."
-I'll be working on a system and suddenly a primitive operation becomes a point of significant friction within the greater whole.
-It becomes as though the entire weight of a system (be it latency, complexity, or perhaps reliance on one specific unfortunate way of doing a thing) rests on a single interface.
+A lot of things in computing are surprisingly easy, if only you know the trick.
+But with some effort, ingenuity, and a little luck they can be made unnecessarily difficult.
+If you ever wanted to append to a file _with passion_, you've come to the right place.
 
-Usually, this is fine.
-But sometimes, you're rewarded with the truly obscene:  a critical performance sensitivity to what is "obviously" a primal, non-decomposable system operation.
-Such as appending to a file.
+This article will go over a few things--IO, CPU caches, shared memory, atomics, juggling overheads, and the tradeoffs that emerge in systems design.
+We're going to meander for a bit; go over some documentation, ponder the interfaces, look at an example, and then finally sketch out an absurd abomination of a library and compare it against a few obvious strategies.
 
-I'm going to meander through the setup for a while.
-If that's not your style, skip to the "write between the lines" section.
-
-# Building with blocks to block the builds
-Many runtimes provide high-level abstractions over classes of common operations.
-Files are among the most common, so when a developer performs operations on such an object the various overheads and trade-offs can be quite opaque.
-Let's be explicit about the required system interactions.
-Concerning ourselves exclusively with the given example, consider:
+# Your Building Blocks are a Convenient Lie
+Runtimes generally provide high-level abstractions over classes of common operations.
+Files are common, so when a developer performs operations on such objects, the various overheads and trade-offs can be quite opaque.
+Let's be explicit about the required system interactions:
 
 ```
     int fd = open(filename.c_str(), O_WRONLY | O_CREAT, 0644);
@@ -28,34 +23,60 @@ Concerning ourselves exclusively with the given example, consider:
     ssize_t written = write(fd, buffer, sz_buffer);
 ```
 
-Now, the `lseek()` in the middle is a little problematic if you have multiple entities performing the same operation simultaneously on the same file (but not the same file _descriptor_).
-Thankfully, there's a way to make _all_ `write` operations append to the end of the file, which moves the `lseek()` component effectively into the kernel.
+Conceptually, what we do when we append to a file is:
+1. Open the file
+2. Make sure operations are staged to the end of the file
+3. Write the data to the file
+
+The `lseek()` in the middle is problematic if you have multiple entities performing the same operation concurrently.
+Thankfully, there's a way to make the `lseek()` part atomic and implicit--improving the correctness of the implementation, while also improving the syscall overhead.
 
 ```
     int fd = open(filename.c_str(), O_WRONLY | O_APPEND | O_CREAT, 0644);
 ...
     ssize_t written = write(fd, buffer, sz_buffer);
 ```
-Not only is this better for the reason above, it also reduces the number of syscalls we require per `write()`.
-But what are the scaling properties?
 
-## How to be Write
-At a high level, it's completely logical to look at `write()` and conclude a successful return status indicates data has been written to the underlying storage substrate.
-Consequently, this would mean that the weight of any IO operation is embodied within the `write()`.
-Unfortunately, logic fails us--this is not the case.
+Despite how many moving parts are involved in writing to storage, it's interesting that the user-facing components are non-decomposable.
+There are ways (like `writev()` and even `io_uring()`) to stage multiple write operations in a single operation, but you can't exactly break `open()` or even `write()` into pieces.
 
-Briefly, the control flow looks like this.
+An incredibly unnatural question to ask, when presented with this observation, is: how can I encumber myself with even more pointless trivia and code-level complexity for the mere hope of one day extracting a tiny sliver of _different_ (not necessarily improved, just **different**) functionality?
+Glad you asked!
+Let's break it down.
+
+## Being Wrong about Write
+It's logical to look at `write()` and conclude--the documentation states explicitly that the return specifies "the number of bytes _written_--that it writes to a storage device.
+Plus, it's in the name!
+For better or worse, this isn't the case--even when `O_DIRECT` is specified, in contemporary Linux the operation merely, at best, enqueues an operation with the IO scheduler.
+
+Briefly, the control flow _might_ look like this:
 1. Userland process calls `write()`
 2. syscall interrupt triggers, ultimately calling the `__do_sys_write()` (or whatever) handler in the kernel
 3. The kernel calls `vfs_write()`
 4. Some more indirection happens (`do_sync_write()`), but eventually the file is expanded, its inode is marked dirty, the associated pages are marked dirty, and control is returned
 5. At some later point in time, for any number of reasons, writeback is triggered; if actual IO occurs, the IO scheduler handles the request
 
-This is actually a somewhat superficial/incorrect sketch, but the fundamental observation is that even "synchronous" write operations can be asynchronous to a large degree.
+If you're not in a `write()`-heavy application, the dominating overhead of `write()` may very well be the syscall itself.
+
+Of course, the lack of a serialization point between 4 and 5 is a lie.
+If it wasn't, then you could just keep enqueuing writes endlessly until something--memory, probably--goes kaput.
+Any system in which requests can be indefinitely enqueued faster than they can be evicted is unstable.
+
+When it comes to IO, the kernel has a number of mechanisms by which to create backpressure.
+For example, there's dirty page throttling.
+There are device-level request queues.
+cgroups has the `blkio` controller.
+
+This makes it quite difficult to build a mental model for how to anticipate IO overheads.
+At some scales of operation, the dominant overhead is the syscall.
+At others, the overhead is the IO itself.
+In yet more, the issue is _other processes_ gobbling up IO, and you have to wait for the bus along with the rest of them.
+Are you on a low latency (network) bus?
+Do you have dynamic IOP provisioning?
+
+Most of these points won't be resolved with an example, but let's conveniently change the subject by talking through one.
 
 ## Example: Centralized Logging
-This example was inspired by a few systems I've worked on--I don't believe the specific details will detract too much from my goal, but insofar as they _do_, you may want to know that I've never seen this precise system before, all put together as I have it here.
-
 Consider a distributed system, comprised of some highly specialized components, and some other parts that provide generic utilities.
 One such service is a central logging authority (CLA):
 1. Individual components send logs to CLA over TCP by serializing messages into a context-laden binary format
@@ -64,21 +85,32 @@ One such service is a central logging authority (CLA):
 4. CLA responds to the request, allowing the client to continue
 
 All of this infrastructure is coordinated at the level of the host, so a single host has a single log.
-This makes ingestion and rotation particularly simple.
+There's no particular need or reason for this, except it's how the system grew up and it's become an operational assumption which is hard for the team to relax.
+At least, it makes ingestion and rotation particularly simple without the need for intermediate processing or additional IO.
 
 These properties were not enough to keep that design a steady-state--as the application grew, a few things happened:
 1. The number of requests served on a single machine increased
 2. The number of log lines per request increased
 3. Other aspects of the system improved, so the amount of load capable of being served in aggregate on a single machine also increased
 
-What emerged was a seemingly fixed cap to system request rate--at a certain point, no matter how application behavior was tuned, the rate maxed out.
+What emerged was a seemingly fixed cap to system request rate--at a certain point, no matter how application behavior was tuned, the service rate maxed out.
 It was known that logging was somehow related, since disabling logging had what was considered an outsized effect on request throughput.
 Throughput was a key measure related to profitability (less throughput -> more computers to serve customer needs), so this became an issue.
+
+The service maintainers had showed that picking up a log file from a day's worth of operation and writing it back to disk took seconds.
+Capacity planning had included bulk IO measurements, which showed provisioned write IOPs were more than sufficient for projected need.
+So, what could be going wrong?
+
+Fate went wrong.
+The numbers looked different when the file was written line-by-line with `fsync()` in-between.
+Bulk IO was measured, but it wasn't what mattered.
 
 ### Rejecting the Axioms
 You might look at this system and wonder how it was possible for a real, profitable, sophisticated piece of technology maintained by good, thoughtful people to possess a global serialization point.
 Largely, it was because these properties did not come together by accident.
 This strategy weakly (see [this](https://lwn.net/Articles/752063/) discussion on `fsync()` in postgres for some details) ensures individual components cannot traverse to a new state until any meaningful context on their current state has been persisted.
+
+In other words, the given design tries (but in the strictest sense fails) to guarantee individual messages are written to storage, even if the very next line of code manages to unplug the power cord.
 
 There are a number of systems for which this is a principled, non-negotiable aspect of their operation, and the horizontal scaling of those systems becomes a key part of their maintenance.
 This, however, was not one of them.
@@ -91,22 +123,8 @@ Accordingly, the `fsync()` was removed and the dynamics of message passing were 
 This yielded quite a bit of scaling headroom.
 But, unfortunately, not forever.
 
-### Leaving Holes to the Lagomorphs
-It can be desirable to solve problems like this as quickly as possible and move on, but I get my guidance from strange places, and I wanted to give this the benefit of deeper consideration.
-Writing this, the thing I have on my mind is the [CFL condition](https://en.wikipedia.org/wiki/Courant%E2%80%93Friedrichs%E2%80%93Lewy_condition).
-Conceptually, this condition is saying something like this:  if you're driving at night, and your stopping distance is longer than what your headlights can illuminate, you're in trouble.
-
-As we seek to provide more abstract, farther-reaching value to our respective organizations, we become headlights.
-You have to choose where you shine your light.
-You do you, this is one of the things I've opted to brighten.
-
-### A Better Logger
+## A Better Logger
 There are a number of off-the-shelf systems similar to what I sketched above, but they tend to fall into one of two archetypes.
-Both models are compatible with the idea of doing dispatch off-thread.
-I think this is a great solution, I think most people should pursue it instead of what I'm writing about here.
-
-If you're satisfied with that much, I don't think you should bother yourself with the rest of what I have here.
-Thank you--until next time.
 
 ##### Client emits one syscall per message
 * pro: message is immediately written
@@ -116,9 +134,16 @@ Thank you--until next time.
 * pro: less than one syscall per message
 * con: messages are not immediately written
 
+##### Both and Other
+I'm missing a category of techniques here, which involve performing the dispatch off-thread.
+I think this is a great solution, but
+
+If you're satisfied with that much, I don't think you should bother yourself with the rest of what I have here.
+Thank you--until next time.
+
 #### Verdict
-In my discussion above, I made the point that we had agreed it would be OK to elide an `fsync`, given that it isn't vital for messages to make their way to storage during a system crash.
-Given this point, one might read the summaries above and conclude we're similarly fine missing immediacy for writing logs.
+Earlier I made the point that the team agreed it would be OK to elide an `fsync`, given that it isn't vital for messages to make their way to storage during a system crash.
+Given this, one might read the summaries above and conclude it's fine to lose immediacy for sending logs out-of-process.
 Not so.
 
 When systems crash, it is very rarely the result of one of the applications you run.
@@ -131,8 +156,8 @@ Let's reach for both.
 As usual, solution is preceded by some boring trivia.
 
 ### All the pages I dislike and none of the devices I admire
-Note that the following discussion contains many simplifications for the sake of narrative simplicity.
-The general feel of things is a little more important than the details--which eats at me a bit, and hopefully it bothers you too.
+Note that the following discussion contains quite a few simplifications, and I'll confess I don't believe I understand the dynamics of all the systems fully.
+As is the prevailing convention of the time, let's assume **vibe** trumps all.
 I don't think anything here is utterly wrong, though.
 
 If you care to look, there's some variation in the fossil record when it comes to memory models.
@@ -143,7 +168,7 @@ Compare and contrast with the things I take for granted--paged memory.
 (The following discussion assumes _shared_ mappings for reasons which will become evident either eventually or possibly never)
 
 Think about it this way--`mmap()` wasn't standardized into POSIX until POSIX.1b-1993.
-I believe, and I may be wrong on this, that `mmap()` first appeared in 1988 on SunOS 4.0, but not 4.3BSD (1986), although the former was heavily influenced by the VM work within the latter.
+As far as I've been able to tell, it didn't even appear until 1988 on SunOS 4.0.
 
 This isn't exactly accidental.
 `mmap()` requires a paged memory system, really.
@@ -167,11 +192,17 @@ On the write side:
 2. When the first write occurs, the CPU traps into the kernel, which updates the page entry as writable, marks the pages as dirty, and resumes execution (write succeeds)
 3. Later, dirty pages are copied back down to the device and the cycle continues
 
-Now, it doesn't take a lot of creativity to imagine that compared to number crunching, this process of preempting executing to fiddle with page table entries can't be cheap--and it isn't.
-Indeed, if you're very intentionally mutating a large range of pages, clearly this can be somewhat laborious, compared to just directly beaming down a sequence of writes.
+Note that step 2 here is how the kernel imposes write-time backpressure on paged IO--execution isn't resumed in the application until whatever prevailing condition has expired.
+
+Compared with number crunching, this process of preempting executing to fiddle with page table entries can't be cheap--and it isn't.
+Indeed, if you're very intentionally mutating a large range of pages, this can be somewhat laborious, compared to just directly beaming down a sequence of writes.
 
 #### The chase is better than the cache
-I made the mistake of bringing up number crunching, so I think we ought to contemplate very carefully the dynamics of memory access.
+When I built this system in the past, I used a combination of atomic semaphores and pthreads primitives.
+People forget, but pthreads objects can be shared across process boundaries.
+For this cut, I wanted to forego the use of these and stick to coordination over shared memory.
+I think this means we should sketch the dynamics here at a very high level, at least.
+
 Wires don't scale with Moore's law, and so memory IO has not kept pace with arithmetic over the last 30-40 years.
 In order to deal with this, contemporary platforms implement hardware caches in order to keep pools of memory closer to the _thinking_ part of the machine.
 
@@ -192,8 +223,10 @@ And for modifications:
 6. Page transitions to L1, marked dirty
 7. Depending on a number of dynamic factors, the write-back eventually happens
 
-If you're a programmer, the essentially thing to keep in mind is that the CPU tries really, really hard to juggle the page between the different cores and different layers of cache, shuffling (close to) the minimum number of copies around.
-This is really important, and it's actually the crux of why many lock-free data structures end up being more expensive than their fully-locked brethren.
+For the purpose of this discussion, the essential thing to keep in mind is that the CPU tries to juggle the page between the different cores and different layers of cache, shuffling (close to) the minimum number of copies around.
+This is important, and it's actually the crux of why many lock-free data structures end up being more expensive than their fully-locked brethren.
+
+Consider a pathological pattern--each core
 It's not hard to imagine a world where your beautiful lock-free structure is spread out over a large number of pages, necessitating endless and pointless CAS after CAS after CAS.
 
 To put it another way, a file-backed mapping is virtually indistinguishable from a heap mapping when it comes to cross-task communication.
@@ -249,9 +282,12 @@ typedef struct {
 | page_size   | Chunk size is a multiple of this, plus we need to know it for mmap |
 | chunk_size  | Defines how much to grow the file when needed |
 
+The really important thing to look at here is the `cursor` and the `chunk_size`, since these define a lot of the downstream dynamics.
 
 #### Cursing
-This use of an atomic integer as a means of atomically taking a contiguous position is
+This use of an integer as a means of atomically taking a contiguous position is something of a pattern in shared-memory coordination.
+That doesn't exactly make it well-known outside of a niche field.
+Let's break it down.
 
 Initially, suppose the log file looks like this:
 ```
@@ -299,9 +335,13 @@ Process B concurrently does the same, receiving its own region.
 
 As long as A and B stay within their regions, this allows multiple processes to safely write to the same file simultaneously.
 
-#### Cursing, except you have to expand when you do it
-Let's track what the metadata does when a cursor hits the end of the file.
-Suppose we have a setup where the chunk size is one page, and we allocated just two at the beginning.
+#### fembiggen()
+One of the key distinctions between this setup and a shared-memory ringbuffer is the fact that the size of the area can and must resize under normal operation.
+This makes it a little trickier, especially the error conditions, but let's see how it might work.
+
+We'll track what the metadata does when a cursor hits the end of the file.
+Suppose we have a setup where the chunk size is one page, and we allocated just one at the beginning.
+
 ```
 +-------------------+     +-------------------+
 | Metadata          |     | Data File         |
@@ -340,15 +380,28 @@ At the end of an expansion process, what we want is:
                                      | new file_size = 8192
 ```
 
-In order to get there to here,
+In order to get from there to here,
 1. Notice that your cursor is too big
 2. Try to lock the file, checking cursor size and retrying until you have it
 3. Compute the new file size, based on your needs
 4. If the current file size is smaller, call `ftruncate()` on the file to expand it and release the lock
+
+You might admit a small race somewhere between 1 and 3, which allows other processes to coordinate on a desired maximum size.
+The idea is to use a speculative size field and just ratchet it to the biggest chunk boundary needed by the given cursor.
+I didn't use this pattern, but I thought it was worth pointing out.
 
 ### Duo Ex Nihilo
 Before we can do _any_ of that, though, we have to create the files.
 We want to do so in a way that doesn't presume any one process will be empowered to take its time and set everything up while everyone else watches.
 We need to handle the case where two prospective creators butt heads.
 
+(the rest of this section discusses how the metadata file and data file area created and initialized safely under contention)
+
 ### A Ring of Chunks
+(this explains how to do the in-process memory mapping for chunks, allowing the total mapped size of the file to remain capped even if the file itself is large)
+
+## Results
+(This section has performance results)
+
+## Final Thoughts
+(some final thoughts)
