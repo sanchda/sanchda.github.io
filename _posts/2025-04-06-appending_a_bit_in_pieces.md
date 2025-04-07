@@ -675,6 +675,11 @@ I think the performance can be improved quite a bit as well.
 One of the weaknesses of shared-memory libraries is the fact that they can easily enter indeterminate intermediate states if a collaborating process crashes or is paused.
 I know of two strategies around this (they amount to the same thing--there should be no unrecoverable intermediate states), but that's a story for a different night.
 
-#### Source Code
+### Source Code
 * [mmlog](https://github.com/sanchda/systems_experiments/tree/main/fastlog)
 * [benchmark](https://github.com/sanchda/systems_experiments/tree/main/write_append)
+
+### Credits
+I'm grateful to anyone who reads this, but especially those who help me fix my mistakes or clear up my shortcomings.
+
+Shout out to [Tanel Poder](https://www.linkedin.com/in/tanelpoder/) for realizing that I had written _page_ several times when I should have written _cache line_.
