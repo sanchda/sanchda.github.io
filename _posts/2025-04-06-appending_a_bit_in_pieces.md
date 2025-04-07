@@ -194,12 +194,12 @@ Indeed, if you're very intentionally mutating a large range of pages, this can b
 
 #### The chase is better than the cache
 When I built this system in the past, I used a combination of semaphores and pthreads primitives.
-People forget, but pthreads objects can be shared across process boundaries.
+People forget, but pthreads objects can be shared across process boundaries (super useful!).
 For this cut, I wanted to forego the use of these and stick to coordination over shared memory.
 I think this means we should sketch the dynamics here at a very high level, at least.
 
 Wires don't scale with Moore's law, and so memory IO has not kept pace with arithmetic over the last 30-40 years.
-In order to deal with this, contemporary platforms implement hardware caches in order to keep pools of memory closer to the _thinking_ part of the machine.
+In order to deal with this, contemporary platforms implement hardware caches for keeping pools of memory closer to the _thinking_ part of the machine.
 
 I don't want to get too deep into the weeds, so let's assume we're on an architecture where our shared memory page is PIPT--physically indexed, physically tagged.
 This means that any access by any process requires no aliasing and the kernel requires no explicit flush operations.
@@ -207,24 +207,28 @@ This means that any access by any process requires no aliasing and the kernel re
 
 An extremely simplified and borderline (or possibly _actually_) incorrect summary for *access* operations:
 1. CPU translates the process-level virtual memory to a physical address using TLB (... or walks page table)
-2. CPU checks L1-L3 in order, if it fails it gets pulled from RAM (this is guaranteed, since the page access would hit an error if no page fault had occurred)
-3. Cache controller ensures coherence between cores by copying pages around if needed
+2. CPU checks L1-L3 in order, if it fails its cache line gets pulled from RAM (this is guaranteed, since the page access would hit an error if no page fault had occurred)
+3. Cache controller ensures coherence between cores by copying cache lines around if needed
 
-And for modifications:
+I'm using the term "cache line" here without any introduction.
+It's the quantum of data access between/within CPU caches and main memory.
+As you might guess, these are aligned to physical addresses (64 bytes for x86_64).
+
+Anyway, for modifications:
 1. Again with the TLB
 2. Again with the hierarchy check
 3. Before mutation, check with the other cores
-4. S (shared) pages become invalidated and other cores drop their copies
-5. Page transitions to M (modified)
-6. Page transitions to L1, marked dirty
+4. S (shared) cache lines become invalidated and other cores drop their copies
+5. Cache line transitions to M (modified)
+6. Cache line transitions to L1, marked dirty
 7. Depending on a number of dynamic factors, the write-back eventually happens
 
-For the purpose of this discussion, the essential thing to keep in mind is that the CPU tries to juggle the page between the different cores and different layers of cache, shuffling (close to) the minimum number of copies around.
+For the purpose of this discussion, the essential thing to keep in mind is that the CPU tries to juggle the cache lines between the different cores and different layers of cache, shuffling (close to) the minimum number of copies around.
 This is important, and it's actually the crux of why many lock-free data structures end up being more expensive than their fully-locked brethren.
 
-It's not hard to imagine a world where your beautiful lock-free structure is spread out over a large number of pages, necessitating endless and pointless CAS after CAS after CAS.
+It's not hard to imagine a world where your beautiful lock-free structure is spread out over memory, which necessitates endless and pointless CAS after CAS after CAS.
 
-To put it another way, a file-backed mapping is virtually indistinguishable from a heap mapping when it comes to cross-task communication.
+To put it another way, a file-backed mapping is virtually (ha!) indistinguishable from a heap mapping when it comes to cross-task communication.
 And that's the insight we need to start us off.
 
 # Write Between the Lines
@@ -603,7 +607,8 @@ Let's compare this against a few other ways of appending to a file.
 | Direct I/O | open(..., O_DIRECT) to bypass page cache |
 | Linux AIO | libaio |
 
-Timings are done within a VM, on a machine equipped with a fast local SSD.
+Timings are done within a VM, on a machine (my laptop!) equipped with a fast local SSD.
+If I were to brush this up and make it a more accessible library, I'd probably reveal benchmarks on some standard cloud configurations.
 In my experience, `mmlog` shows a much more extreme win on a high-latency substrate, like EBS.
 
 ### Fixed-size small logs
@@ -637,6 +642,11 @@ Here's a completely degenerative example.
 | Direct I/O (O_DIRECT) | 3886 | 9.71 | 0.001 |
 | Linux AIO | 482 | 1.21 | 0.006 |
 
+A quick note here.
+`O_DIRECT` dispenses with some of the intermediate abstractions available to other write modes.
+Accordingly, when IO is dispatched, `O_DIRECT` ensures the request at least hits the storage controller (albeit maybe not actual storage).
+This is great when you're doing large writes, but for small writes like this, clearly latency is a dominating factor.
+
 ### Almost a Chunk
 As we get closer to the chunk size, some problems start to emerge.
 I think this is actually a sign that I have a bug in the implementation, but for the purpose of discussion let's take this as a loss.
@@ -652,8 +662,8 @@ I think this is actually a sign that I have a bug in the implementation, but for
 | Direct I/O (O_DIRECT) | 397 | 9.93 | 3.074 |
 | Linux AIO | 265 | 6.62 | 4.605 |
 
-### I Sleep
-I'm tired, but a complete harness would also check what happens when the underlying IO system (either the scheduler, the bus, or the storage controller) hits a saturation point and dirty-page marking started to apply backpressure.
+### That's Enough
+A complete harness would also check what happens when the underlying IO system (either the scheduler, the bus, or the storage controller) hits a saturation point and dirty-page marking started to apply backpressure.
 I'd normally deduce this threshold by using the `tracefs` system to instrument block latency.
 Maybe another time!
 
@@ -665,6 +675,11 @@ I think the performance can be improved quite a bit as well.
 One of the weaknesses of shared-memory libraries is the fact that they can easily enter indeterminate intermediate states if a collaborating process crashes or is paused.
 I know of two strategies around this (they amount to the same thing--there should be no unrecoverable intermediate states), but that's a story for a different night.
 
-#### Source Code
+### Source Code
 * [mmlog](https://github.com/sanchda/systems_experiments/tree/main/fastlog)
 * [benchmark](https://github.com/sanchda/systems_experiments/tree/main/write_append)
+
+### Credits
+I'm grateful to anyone who reads this, but especially those who help me fix my mistakes or clear up my shortcomings.
+
+Shout out to [Tanel Poder](https://www.linkedin.com/in/tanelpoder/) for realizing that I had written _page_ several times when I should have written _cache line_.
