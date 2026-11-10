@@ -4,10 +4,20 @@ title: About
 permalink: /about/
 ---
 
-My name is David.  Sometimes I do computer stuff:
- * low-latency systems
- * distributed computing (NB: CAP more than docker-compose)
- * numerical analysis, scientific computing
- * application/system behavior analysis (previously known as performance engineering)
+Hi, I'm David. I work on computers.
 
-I'm not really a public person.  Please figure out how to talk with me if you want to talk with me.
+I've been interested in a few things lately:
+* How to track what the computers are really doing when we ask them to work
+* How to discover when computer programs are misbehaving
+* Consequences arising from the lack of simultaneity (in computing)
+* The fiddly bits around the ancient husks we still (for now?) build systems around
+* Various horrible and wonderful things that happen when computers crunch numbers
+
+If you've experienced the tragedy of working with computers, you may know these as:
+* Observability
+* Diagnostics
+* Distributed systems
+* Systems programming
+* Numerical analysis/scientific computing
+
+If you'd like to communicate with me, I'm sure we can find a reasonable arrangement. Somehow.
